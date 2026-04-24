@@ -84,7 +84,8 @@ func (h *UserHandler) UpdateUser(c fiber.Ctx) error {
 		return errs.ErrBadRequest
 	}
 
-	var data map[string]interface{}
+	// var data map[string]interface{}
+	var data models.UserUpdateRequest
 	if err := c.Bind().Body(&data); err != nil {
 		return errs.ErrBadRequest
 	}

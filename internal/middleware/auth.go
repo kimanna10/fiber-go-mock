@@ -3,6 +3,7 @@ package middleware
 import (
 	"fiber-go/internal/auth"
 	"fiber-go/internal/errs"
+	"fiber-go/internal/patterns"
 	"fmt"
 	"strconv"
 	"strings"
@@ -61,14 +62,39 @@ func RequireRole(roles ...string) fiber.Handler {
 }
 
 // CanAccessUser проверяет, является ли юзер владельцем данных или админом
-func CanAccessUser() fiber.Handler {
+// func CanAccessUser() fiber.Handler {
+// 	return func(c fiber.Ctx) error {
+// 		// Берем ID из контекста (кто делает запрос)
+// 		userID, ok := c.Locals(UserIDKey).(int)
+// 		if !ok {
+// 			return errs.ErrUnauthorized
+// 		}
+
+// 		role, _ := c.Locals(RoleKey).(string)
+
+// 		// Берем ID из параметров URL (над кем делаем запрос)
+// 		targetID, err := strconv.Atoi(c.Params("id"))
+// 		if err != nil {
+// 			return errs.ErrBadRequest
+// 		}
+
+// 		// Если я не тот, за кого себя выдаю И я не админ
+// 		if userID != targetID && role != "admin" {
+// 			return errs.ErrForbidden
+// 		}
+
+// 		return c.Next()
+// 	}
+// }
+
+// CanAccessUser проверяет, является ли юзер владельцем данных или админом c паттерном Strategy
+func CanAccessUser(strategy patterns.AccessStrategy) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		// Берем ID из контекста (кто делает запрос)
 		userID, ok := c.Locals(UserIDKey).(int)
 		if !ok {
 			return errs.ErrUnauthorized
 		}
-
 		role, _ := c.Locals(RoleKey).(string)
 
 		// Берем ID из параметров URL (над кем делаем запрос)
@@ -77,11 +103,17 @@ func CanAccessUser() fiber.Handler {
 			return errs.ErrBadRequest
 		}
 
-		// Если я не тот, за кого себя выдаю И я не админ
-		if userID != targetID && role != "admin" {
-			return errs.ErrForbidden
+		ctx := patterns.AccessContext{
+			UserId:   userID,
+			TargetId: targetID,
+			Role:     patterns.Role(role),
 		}
 
+		// Если я не тот, за кого себя выдаю И я не админ
+		access := strategy.CanAccess(ctx)
+		if !access {
+			return errs.ErrForbidden
+		}
 		return c.Next()
 	}
 }

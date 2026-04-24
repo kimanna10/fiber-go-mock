@@ -3,6 +3,7 @@ package routes
 import (
 	"fiber-go/internal/handlers"
 	"fiber-go/internal/middleware"
+	"fiber-go/internal/patterns"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -12,12 +13,14 @@ func UserRoutes(app *fiber.App, h *handlers.UserHandler) {
 	// Группа роутов, защищенная JWT
 	users := app.Group("/users", middleware.JWTMiddleware, middleware.RateLimit(middleware.NormalLimit, middleware.KeyByUserOrIP))
 
+	accessUser := middleware.CanAccessUser(patterns.OwnerOrAdmin())
+
 	// Теперь используем методы структуры через переменную h
 	users.Get("/", middleware.RequireRole("admin"), h.GetUsers)
-	users.Get("/:id", middleware.CanAccessUser(), h.GetUserById)
+	users.Get("/:id", accessUser, h.GetUserById)
 
 	// Мы решили объединить логику в один Patch или оставить UpdateUser
-	users.Patch("/:id", middleware.CanAccessUser(), h.UpdateUser)
+	users.Patch("/:id", accessUser, h.UpdateUser)
 
-	users.Delete("/:id", middleware.CanAccessUser(), h.DeleteUser)
+	users.Delete("/:id", accessUser, h.DeleteUser)
 }

@@ -28,4 +28,8 @@ var (
 	ErrInvalidCredentials = New("Invalid credentials", 401)
 	ErrInvalidToken       = New("Invalid token", 401)
 	ErrForbidden          = New("Forbidden", 403)
+
+	// Для валидации
+	ErrFieldEmpty  = New("Field cannot be empty", 400)
+	ErrInvalidData = New("Invalid data", 400)
 )

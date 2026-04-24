@@ -38,3 +38,11 @@ type LoginResponse struct {
 	RefreshToken string       `json:"refresh_token"`
 	User         UserResponse `json:"user"`
 }
+
+// Для Builder
+type UserUpdateRequest struct {
+	Name     *string `json:"name"`
+	Age      *int    `json:"age"`
+	Email    *string `json:"email"`
+	Password *string `json:"password"`
+}
