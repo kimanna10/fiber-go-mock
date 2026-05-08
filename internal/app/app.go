@@ -2,6 +2,8 @@ package app
 
 import (
 	"database/sql"
+	"fiber-go/internal/auth"
+	"fiber-go/internal/cache"
 	"fiber-go/internal/handlers"
 	"fiber-go/internal/middleware"
 	"fiber-go/internal/repository"
@@ -16,12 +18,17 @@ import (
 // Setup связывает все слои приложения и возвращает настроенный Fiber App
 func Setup(db *sql.DB, log *slog.Logger) *fiber.App {
 
+	keys := cache.NewKeyBuilder("fibergo")
+
 	// 1. Инициализация слоев (Dependency Injection)
 	userRepo := repository.NewUserRepository(db)
 	authRepo := repository.NewAuthRepository(db)
+	redisCache := cache.NewRedisCache("localhost:6379")
 
-	userSvc := services.NewUserService(userRepo)
-	authSvc := services.NewAuthService(userRepo, authRepo)
+	jwtService := auth.NewJWTService()
+
+	userSvc := services.NewUserService(userRepo, redisCache, keys)
+	authSvc := services.NewAuthService(userRepo, authRepo, jwtService)
 
 	userHdl := handlers.NewUserHandler(userSvc)
 	authHdl := handlers.NewAuthHandler(authSvc)

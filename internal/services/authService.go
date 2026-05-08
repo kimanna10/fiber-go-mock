@@ -22,14 +22,16 @@ type AuthService interface {
 }
 
 type authService struct {
-	userRepo repository.UserRepository
-	authRepo repository.AuthRepository
+	userRepo     repository.UserRepository
+	authRepo     repository.AuthRepository
+	tokenService auth.TokenService
 }
 
-func NewAuthService(uRepo repository.UserRepository, aRepo repository.AuthRepository) AuthService {
+func NewAuthService(uRepo repository.UserRepository, aRepo repository.AuthRepository, tService auth.TokenService) AuthService {
 	return &authService{
-		userRepo: uRepo,
-		authRepo: aRepo,
+		userRepo:     uRepo,
+		authRepo:     aRepo,
+		tokenService: tService,
 	}
 }
 
@@ -56,7 +58,7 @@ func (s *authService) Login(ctx context.Context, req models.UserLoginRequest) (*
 // Refresh — выдает новые токены, если старый рефреш-токен валиден
 func (s *authService) Refresh(ctx context.Context, refreshToken string) (*models.LoginResponse, error) {
 	// 1. Хэшируем полученную строку
-	hash := auth.HashToken(refreshToken)
+	hash := s.tokenService.HashToken(refreshToken)
 
 	// 2. Проверяем в базе через AuthRepository
 	storedToken, err := s.authRepo.GetRefreshToken(ctx, hash)
@@ -85,25 +87,25 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*models
 
 // Logout — просто удаляет сессию из базы
 func (s *authService) Logout(ctx context.Context, refreshToken string) error {
-	hash := auth.HashToken(refreshToken)
+	hash := s.tokenService.HashToken(refreshToken)
 	return s.authRepo.DeleteRefreshToken(ctx, hash)
 }
 
 // Вспомогательный приватный метод, чтобы не дублировать код генерации
 func (s *authService) generateFullSession(ctx context.Context, user models.User) (*models.LoginResponse, error) {
 	// Генерируем строки токенов (используем твой пакет internal/auth)
-	accessToken, err := auth.GenerateAccessToken(user.ID, user.Role)
+	accessToken, err := s.tokenService.GenerateAccessToken(user.ID, user.Role)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := auth.GenerateRefreshToken()
+	refreshToken, err := s.tokenService.GenerateRefreshToken()
 	if err != nil {
 		return nil, err
 	}
 
 	// Сохраняем хэш в базу через AuthRepository (на 7 дней)
-	hashedRefresh := auth.HashToken(refreshToken)
+	hashedRefresh := s.tokenService.HashToken(refreshToken)
 	err = s.authRepo.SaveRefreshToken(ctx, user.ID, hashedRefresh, 7*24*time.Hour)
 	if err != nil {
 		return nil, err

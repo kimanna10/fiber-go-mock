@@ -12,6 +12,19 @@ import (
 	"encoding/hex"
 )
 
+type TokenService interface {
+	GenerateAccessToken(userID int, role string) (string, error)
+	ParseToken(tokenStr string) (*Claims, error)
+	GenerateRefreshToken() (string, error)
+	HashToken(token string) string
+}
+
+type JWTService struct{}
+
+func NewJWTService() TokenService {
+	return &JWTService{}
+}
+
 type Claims struct {
 	UserID int    `json:"user_id"`
 	Role   string `json:"role"`
@@ -20,7 +33,7 @@ type Claims struct {
 
 var accessSecret = []byte(os.Getenv("JWT_ACCESS_SECRET"))
 
-func GenerateAccessToken(userID int, role string) (string, error) {
+func (j *JWTService) GenerateAccessToken(userID int, role string) (string, error) {
 	claims := Claims{
 		UserID: userID,
 		Role:   role,
@@ -33,7 +46,7 @@ func GenerateAccessToken(userID int, role string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(accessSecret)
 }
-func ParseToken(tokenStr string) (*Claims, error) {
+func (j *JWTService) ParseToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return accessSecret, nil
 	})
@@ -49,7 +62,7 @@ func ParseToken(tokenStr string) (*Claims, error) {
 
 	return claims, nil
 }
-func GenerateRefreshToken() (string, error) {
+func (j *JWTService) GenerateRefreshToken() (string, error) {
 	b := make([]byte, 32) // 256 бит
 
 	_, err := rand.Read(b)
@@ -59,7 +72,7 @@ func GenerateRefreshToken() (string, error) {
 
 	return hex.EncodeToString(b), nil
 }
-func HashToken(token string) string {
+func (j *JWTService) HashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(hash[:])
 }

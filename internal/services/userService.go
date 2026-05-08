@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"sync"
+	"time"
 
+	"fiber-go/internal/cache"
 	"fiber-go/internal/errs"
 	"fiber-go/internal/models"
 	"fiber-go/internal/patterns"
@@ -28,23 +30,40 @@ type UserService interface {
 
 // Делаем структуру приватной (с маленькой буквы)
 type userService struct {
-	repo  repository.UserRepository // Используем интерфейс репозитория!
-	cache map[int]models.User
-	mu    sync.RWMutex
+	repo repository.UserRepository // Используем интерфейс репозитория
+	// cache map[int]models.User
+	// mu    sync.RWMutex
+	cache cache.Cache
+	keys  *cache.KeyBuilder
 }
 
 // NewUserService внедряет зависимость репозитория в сервис
-func NewUserService(repo repository.UserRepository) UserService {
+func NewUserService(repo repository.UserRepository, cache cache.Cache, keys *cache.KeyBuilder) UserService {
 	return &userService{
-		repo:  repo,
-		cache: make(map[int]models.User),
+		repo: repo,
+		// cache: make(map[int]models.User),
+		cache: cache,
+		keys:  keys,
 	}
 }
 
 // GetUsers возвращает список UserResponse (DTO)
 func (s *userService) GetUsers(ctx context.Context, limit, page int, name string) ([]models.UserResponse, error) {
-	offset := (page - 1) * limit
 
+	// Формируем ключ для кэша
+	key := s.keys.Users(page, limit, name)
+
+	// Пытаемся достать из кэша
+	cached, err := s.cache.Get(ctx, key)
+	if err == nil {
+		var resp []models.UserResponse
+		if json.Unmarshal(cached, &resp) == nil {
+			return resp, nil
+		}
+	}
+
+	// Реализуем пагинацию
+	offset := (page - 1) * limit
 	users, err := s.repo.GetUsers(ctx, limit, offset, name)
 	if err != nil {
 		return nil, err
@@ -53,27 +72,38 @@ func (s *userService) GetUsers(ctx context.Context, limit, page int, name string
 	// Конвертируем []models.User -> []models.UserResponse
 	resp := make([]models.UserResponse, 0, len(users))
 	for _, u := range users {
-		resp = append(resp, models.UserResponse{
-			ID:    u.ID,
-			Name:  u.Name,
-			Age:   u.Age,
-			Email: u.Email,
-			Role:  u.Role,
-		})
+		resp = append(resp, s.mapToResponse(u))
 	}
+
+	// Сохраняем в кэш
+	data, _ := json.Marshal(resp)
+	_ = s.cache.Set(ctx, key, data, 5*time.Minute)
+
 	return resp, nil
 }
 
 // GetUserById использует кэш и возвращает UserResponse
 func (s *userService) GetUserById(ctx context.Context, id int) (models.UserResponse, error) {
-	s.mu.RLock()
-	cached, ok := s.cache[id]
-	s.mu.RUnlock()
+	// s.mu.RLock()
+	// cached, ok := s.cache[id]
+	// s.mu.RUnlock()
+	// if ok {
+	// 	return s.mapToResponse(cached), nil
+	// }
 
-	if ok {
-		return s.mapToResponse(cached), nil
+	// Формируем ключ для кэша
+	key := s.keys.User(id) // namespace:user:1
+
+	// Пытаемся достать из кэша
+	cached, err := s.cache.Get(ctx, key)
+	if err == nil {
+		var user models.User
+		if json.Unmarshal(cached, &user) == nil {
+			return s.mapToResponse(user), nil
+		}
 	}
 
+	// Если в кэше нет, то достаем из БД
 	user, err := s.repo.GetUserById(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -82,9 +112,12 @@ func (s *userService) GetUserById(ctx context.Context, id int) (models.UserRespo
 		return models.UserResponse{}, err
 	}
 
-	s.mu.Lock()
-	s.cache[id] = user
-	s.mu.Unlock()
+	// s.mu.Lock()
+	// s.cache[id] = user
+	// s.mu.Unlock()
+
+	data, _ := json.Marshal(user)
+	_ = s.cache.Set(ctx, key, data, 5*time.Minute)
 
 	return s.mapToResponse(user), nil
 }
@@ -132,6 +165,11 @@ func (s *userService) Register(ctx context.Context, req models.UserRegisterReque
 	if err := s.repo.Create(ctx, &user); err != nil {
 		return models.UserResponse{}, err
 	}
+
+	// Удаление из кэша, так как нового пользователя нет в кэше
+	pattern := s.keys.UsersPattern()
+	_ = s.cache.DeleteByPattern(ctx, pattern)
+
 	return s.mapToResponse(user), nil
 }
 
@@ -208,10 +246,18 @@ func (s *userService) UpdateUser(ctx context.Context, id int, req models.UserUpd
 		return models.UserResponse{}, err
 	}
 
+	// Удаляем из кэша, так как данные изменились
+	key := s.keys.User(id)
+	_ = s.cache.Delete(ctx, key)
+
+	// Удаление из кэша, где мог был присутствовать данный пользователь
+	pattern := s.keys.UsersPattern()
+	_ = s.cache.DeleteByPattern(ctx, pattern)
+
 	// Сбрасываем кэш, так как данные изменились
-	s.mu.Lock()
-	delete(s.cache, id)
-	s.mu.Unlock()
+	// s.mu.Lock()
+	// delete(s.cache, id)
+	// s.mu.Unlock()
 
 	return s.mapToResponse(updatedUser), nil
 }
@@ -224,9 +270,17 @@ func (s *userService) DeleteUser(ctx context.Context, id int) error {
 		return err
 	}
 
-	s.mu.Lock()
-	delete(s.cache, id)
-	s.mu.Unlock()
+	// s.mu.Lock()
+	// delete(s.cache, id)
+	// s.mu.Unlock()
+
+	// Удаляем из кэша, так как данные изменились
+	key := s.keys.User(id)
+	_ = s.cache.Delete(ctx, key)
+
+	// Удаление из кэша, где мог был присутствовать данный пользователь
+	pattern := s.keys.UsersPattern()
+	_ = s.cache.DeleteByPattern(ctx, pattern)
 
 	return nil
 }

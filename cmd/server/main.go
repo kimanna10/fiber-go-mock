@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+
 	// 1. Окружение
 	cfg := config.Load()
 

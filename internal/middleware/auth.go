@@ -18,26 +18,28 @@ const (
 )
 
 // JWTMiddleware проверяет наличие и валидность токена
-func JWTMiddleware(c fiber.Ctx) error {
-	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return errs.ErrUnauthorized
-	}
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		return errs.ErrUnauthorized
-	}
+func JWTMiddleware(tokenService auth.TokenService) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return errs.ErrUnauthorized
+		}
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			return errs.ErrUnauthorized
+		}
 
-	claims, err := auth.ParseToken(parts[1])
-	if err != nil {
-		return errs.ErrInvalidToken
+		claims, err := tokenService.ParseToken(parts[1])
+		if err != nil {
+			return errs.ErrInvalidToken
+		}
+
+		// Используем константы вместо строк
+		c.Locals(UserIDKey, claims.UserID)
+		c.Locals(RoleKey, claims.Role)
+
+		return c.Next()
 	}
-
-	// Используем константы вместо строк
-	c.Locals(UserIDKey, claims.UserID)
-	c.Locals(RoleKey, claims.Role)
-
-	return c.Next()
 }
 
 // RequireRole проверяет, входит ли роль юзера в список разрешенных
