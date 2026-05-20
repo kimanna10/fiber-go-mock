@@ -46,3 +46,9 @@ type UserUpdateRequest struct {
 	Email    *string `json:"email"`
 	Password *string `json:"password"`
 }
+
+// type WSMessage struct {
+// 	Type string `json:"type"` // "chat"
+// 	To   int    `json:"to"`   // кому отправляем
+// 	Body string `json:"body"` // текст
+// }

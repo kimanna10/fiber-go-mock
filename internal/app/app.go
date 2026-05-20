@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fiber-go/internal/auth"
 	"fiber-go/internal/cache"
+	"fiber-go/internal/config"
 	"fiber-go/internal/handlers"
 	"fiber-go/internal/middleware"
 	"fiber-go/internal/repository"
@@ -13,25 +14,35 @@ import (
 	"log/slog"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/hibiken/asynq"
 )
 
 // Setup связывает все слои приложения и возвращает настроенный Fiber App
-func Setup(db *sql.DB, log *slog.Logger) *fiber.App {
+func Setup(db *sql.DB, log *slog.Logger, cfg *config.Config) *fiber.App {
 
 	keys := cache.NewKeyBuilder("fibergo")
+	redisAddr := cfg.Redis.Host + ":" + cfg.Redis.Port
 
 	// 1. Инициализация слоев (Dependency Injection)
 	userRepo := repository.NewUserRepository(db)
 	authRepo := repository.NewAuthRepository(db)
-	redisCache := cache.NewRedisCache("localhost:6379")
+	redisCache := cache.NewRedisCache(redisAddr)
 
-	jwtService := auth.NewJWTService()
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{
+		Addr: redisAddr,
+	})
 
-	userSvc := services.NewUserService(userRepo, redisCache, keys)
+	jwtService := auth.NewJWTService(cfg.JWTSecret)
+
+	userSvc := services.NewUserService(userRepo, redisCache, keys, asynqClient)
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtService)
 
 	userHdl := handlers.NewUserHandler(userSvc)
 	authHdl := handlers.NewAuthHandler(authSvc)
+
+	// [+] Инициализация WebSocket слоев
+	wsHub := services.NewWSHub(redisCache, keys) // Создаем хаб (сервис)
+	wsHdl := handlers.NewWSHandler(wsHub)        // Создаем хендлер
 
 	// 2. Настройка Fiber
 	app := fiber.New(fiber.Config{
@@ -50,8 +61,12 @@ func Setup(db *sql.DB, log *slog.Logger) *fiber.App {
 	api.Post("/refresh", authHdl.Refresh)
 	api.Post("/logout", authHdl.Logout)
 
+	// [+] Маршрут для WebSocket подключений
+	// Сначала идет твой JWT мидлвар, чтобы вытащить userID, затем хендлер вебсокета
+	app.Get("/ws", middleware.JWTMiddleware(jwtService), wsHdl.HandleWS)
+
 	// Приватные роуты (внутри пакета routes)
-	routes.UserRoutes(app, userHdl)
+	routes.UserRoutes(app, userHdl, jwtService)
 
 	return app
 }

@@ -10,9 +10,7 @@ import (
 )
 
 // Передаем сюда инициализированный userHandler
-func UserRoutes(app *fiber.App, h *handlers.UserHandler) {
-
-	jwtService := auth.NewJWTService()
+func UserRoutes(app *fiber.App, h *handlers.UserHandler, jwtService auth.TokenService) {
 
 	// Группа роутов, защищенная JWT и с ограничением по количеству запросов
 	users := app.Group(

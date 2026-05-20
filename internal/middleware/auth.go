@@ -18,18 +18,55 @@ const (
 )
 
 // JWTMiddleware проверяет наличие и валидность токена
+// func JWTMiddleware(tokenService auth.TokenService) fiber.Handler {
+// 	return func(c fiber.Ctx) error {
+// 		authHeader := c.Get("Authorization")
+// 		if authHeader == "" {
+// 			return errs.ErrUnauthorized
+// 		}
+// 		parts := strings.Split(authHeader, " ")
+// 		if len(parts) != 2 || parts[0] != "Bearer" {
+// 			return errs.ErrUnauthorized
+// 		}
+
+// 		claims, err := tokenService.ParseToken(parts[1])
+// 		if err != nil {
+// 			return errs.ErrInvalidToken
+// 		}
+
+// 		// Используем константы вместо строк
+// 		c.Locals(UserIDKey, claims.UserID)
+// 		c.Locals(RoleKey, claims.Role)
+
+//			return c.Next()
+//		}
+//	}
+//
+// JWTMiddleware проверяет наличие и валидность токена (теперь и в Query для WebSocket)
 func JWTMiddleware(tokenService auth.TokenService) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
-		if authHeader == "" {
-			return errs.ErrUnauthorized
+		var tokenStr string
+
+		if authHeader != "" {
+			// Если токен идет в хедерах (стандартный HTTP)
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				return errs.ErrUnauthorized
+			}
+			tokenStr = parts[1]
+		} else {
+			// [+] Если в хедерах пусто, проверяем query-параметр ?token=... (для WebSocket)
+			tokenStr = c.Query("token")
 		}
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
+
+		// Если токена нет вообще нигде — отдаем 401
+		if tokenStr == "" {
 			return errs.ErrUnauthorized
 		}
 
-		claims, err := tokenService.ParseToken(parts[1])
+		// Парсим токен (неважно, откуда мы его достали)
+		claims, err := tokenService.ParseToken(tokenStr)
 		if err != nil {
 			return errs.ErrInvalidToken
 		}

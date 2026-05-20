@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -19,10 +18,14 @@ type TokenService interface {
 	HashToken(token string) string
 }
 
-type JWTService struct{}
+type JWTService struct {
+	secret []byte
+}
 
-func NewJWTService() TokenService {
-	return &JWTService{}
+func NewJWTService(secret string) TokenService {
+	return &JWTService{
+		secret: []byte(secret),
+	}
 }
 
 type Claims struct {
@@ -30,8 +33,6 @@ type Claims struct {
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
-
-var accessSecret = []byte(os.Getenv("JWT_ACCESS_SECRET"))
 
 func (j *JWTService) GenerateAccessToken(userID int, role string) (string, error) {
 	claims := Claims{
@@ -44,11 +45,11 @@ func (j *JWTService) GenerateAccessToken(userID int, role string) (string, error
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(accessSecret)
+	return token.SignedString(j.secret)
 }
 func (j *JWTService) ParseToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return accessSecret, nil
+		return j.secret, nil
 	})
 
 	if err != nil {

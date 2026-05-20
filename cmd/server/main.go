@@ -25,7 +25,7 @@ func main() {
 	defer db.Close() // Закрываем при выключении
 
 	// 3. Собираем всё приложение через App Setup
-	server := app.Setup(db, log)
+	server := app.Setup(db, log, cfg)
 
 	// канал для сигнала
 	quit := make(chan os.Signal, 1)

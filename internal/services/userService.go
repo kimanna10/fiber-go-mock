@@ -12,6 +12,9 @@ import (
 	"fiber-go/internal/models"
 	"fiber-go/internal/patterns"
 	"fiber-go/internal/repository"
+
+	"github.com/hibiken/asynq"
+	"golang.org/x/sync/singleflight"
 )
 
 // 1. Описываем интерфейс со всеми методами
@@ -35,15 +38,19 @@ type userService struct {
 	// mu    sync.RWMutex
 	cache cache.Cache
 	keys  *cache.KeyBuilder
+
+	asynqClient *asynq.Client
+	group       singleflight.Group
 }
 
 // NewUserService внедряет зависимость репозитория в сервис
-func NewUserService(repo repository.UserRepository, cache cache.Cache, keys *cache.KeyBuilder) UserService {
+func NewUserService(repo repository.UserRepository, cache cache.Cache, keys *cache.KeyBuilder, asynqClient *asynq.Client) UserService {
 	return &userService{
 		repo: repo,
 		// cache: make(map[int]models.User),
-		cache: cache,
-		keys:  keys,
+		cache:       cache,
+		keys:        keys,
+		asynqClient: asynqClient,
 	}
 }
 
@@ -103,12 +110,22 @@ func (s *userService) GetUserById(ctx context.Context, id int) (models.UserRespo
 		}
 	}
 
-	// Если в кэше нет, то достаем из БД
-	user, err := s.repo.GetUserById(ctx, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.UserResponse{}, errs.ErrUserNotFound
+	v, err, _ := s.group.Do(key, func() (interface{}, error) {
+		// Если в кэше нет, то достаем из БД
+		user, err := s.repo.GetUserById(ctx, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errs.ErrUserNotFound
+			}
+			return nil, err
 		}
+		data, _ := json.Marshal(user)
+		_ = s.cache.Set(ctx, key, data, 5*time.Minute)
+
+		return user, nil
+	})
+
+	if err != nil {
 		return models.UserResponse{}, err
 	}
 
@@ -116,10 +133,7 @@ func (s *userService) GetUserById(ctx context.Context, id int) (models.UserRespo
 	// s.cache[id] = user
 	// s.mu.Unlock()
 
-	data, _ := json.Marshal(user)
-	_ = s.cache.Set(ctx, key, data, 5*time.Minute)
-
-	return s.mapToResponse(user), nil
+	return s.mapToResponse(v.(models.User)), nil
 }
 
 // Register (Create) принимает UserRegisterRequest и возвращает UserResponse
@@ -166,9 +180,17 @@ func (s *userService) Register(ctx context.Context, req models.UserRegisterReque
 		return models.UserResponse{}, err
 	}
 
+	payload, _ := json.Marshal(map[string]string{
+		"Email": user.Email,
+		"Name":  user.Name,
+	})
+	_, _ = s.asynqClient.EnqueueContext(ctx, asynq.NewTask("email:welcome", payload))
+
 	// Удаление из кэша, так как нового пользователя нет в кэше
-	pattern := s.keys.UsersPattern()
-	_ = s.cache.DeleteByPattern(ctx, pattern)
+	// pattern := s.keys.UsersPattern()
+	// _ = s.cache.DeleteByPattern(ctx, pattern)
+
+	s.keys.BumpVersion()
 
 	return s.mapToResponse(user), nil
 }
@@ -251,8 +273,9 @@ func (s *userService) UpdateUser(ctx context.Context, id int, req models.UserUpd
 	_ = s.cache.Delete(ctx, key)
 
 	// Удаление из кэша, где мог был присутствовать данный пользователь
-	pattern := s.keys.UsersPattern()
-	_ = s.cache.DeleteByPattern(ctx, pattern)
+	// pattern := s.keys.UsersPattern()
+	// _ = s.cache.DeleteByPattern(ctx, pattern)
+	s.keys.BumpVersion()
 
 	// Сбрасываем кэш, так как данные изменились
 	// s.mu.Lock()
@@ -279,8 +302,9 @@ func (s *userService) DeleteUser(ctx context.Context, id int) error {
 	_ = s.cache.Delete(ctx, key)
 
 	// Удаление из кэша, где мог был присутствовать данный пользователь
-	pattern := s.keys.UsersPattern()
-	_ = s.cache.DeleteByPattern(ctx, pattern)
+	// pattern := s.keys.UsersPattern()
+	// _ = s.cache.DeleteByPattern(ctx, pattern)
+	s.keys.BumpVersion()
 
 	return nil
 }

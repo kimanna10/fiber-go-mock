@@ -3,6 +3,7 @@ package patterns
 import (
 	"fiber-go/internal/errs"
 	"fiber-go/internal/models"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -18,7 +19,7 @@ func NewUserUpdateBuilder(u models.User) *UserUpdateBuilder {
 
 func (b *UserUpdateBuilder) ApplyPatch(req models.UserUpdateRequest) (*UserUpdateBuilder, error) {
 	if req.Name != nil {
-		if *req.Name == " " {
+		if strings.TrimSpace(*req.Name) == "" {
 			return nil, errs.ErrFieldEmpty
 		}
 		b.user.Name = *req.Name
@@ -32,7 +33,7 @@ func (b *UserUpdateBuilder) ApplyPatch(req models.UserUpdateRequest) (*UserUpdat
 	}
 
 	if req.Email != nil {
-		if *req.Email == " " {
+		if strings.TrimSpace(*req.Email) == "" {
 			return nil, errs.ErrFieldEmpty
 		}
 		b.user.Email = *req.Email
@@ -49,7 +50,7 @@ func (b *UserUpdateBuilder) ApplyPatch(req models.UserUpdateRequest) (*UserUpdat
 }
 
 func (b *UserUpdateBuilder) Build() (models.User, error) {
-	if b.user.Email == " " {
+	if strings.TrimSpace(b.user.Email) == "" {
 		return models.User{}, errs.ErrFieldEmpty
 	}
 	return b.user, nil
@@ -69,7 +70,7 @@ func (b *UserBuilder) SetName(name string) *UserBuilder {
 	if b.err != nil {
 		return b
 	}
-	if name == "" {
+	if strings.TrimSpace(name) == "" {
 		b.err = errs.ErrFieldEmpty
 		return b
 	}
@@ -93,7 +94,7 @@ func (b *UserBuilder) SetEmail(email string) *UserBuilder {
 	if b.err != nil {
 		return b
 	}
-	if email == "" {
+	if strings.TrimSpace(email) == "" {
 		b.err = errs.ErrFieldEmpty
 		return b
 	}
@@ -105,7 +106,7 @@ func (b *UserBuilder) SetPassword(password string) *UserBuilder {
 	if b.err != nil {
 		return b
 	}
-	if password == "" {
+	if strings.TrimSpace(password) == "" {
 		b.err = errs.ErrFieldEmpty
 		return b
 	}
