@@ -14,6 +14,7 @@ import (
 	"log/slog"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/hibiken/asynq"
 )
 
@@ -26,6 +27,9 @@ func Setup(db *sql.DB, log *slog.Logger, cfg *config.Config) *fiber.App {
 	// 1. Инициализация слоев (Dependency Injection)
 	userRepo := repository.NewUserRepository(db)
 	authRepo := repository.NewAuthRepository(db)
+
+	chatRepo := repository.NewChatRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
 	redisCache := cache.NewRedisCache(redisAddr)
 
 	asynqClient := asynq.NewClient(asynq.RedisClientOpt{
@@ -36,18 +40,26 @@ func Setup(db *sql.DB, log *slog.Logger, cfg *config.Config) *fiber.App {
 
 	userSvc := services.NewUserService(userRepo, redisCache, keys, asynqClient)
 	authSvc := services.NewAuthService(userRepo, authRepo, jwtService)
+	msgSvc := services.NewMessageService(messageRepo)
 
 	userHdl := handlers.NewUserHandler(userSvc)
 	authHdl := handlers.NewAuthHandler(authSvc)
+	msgHdl := handlers.NewMessageHandler(msgSvc)
 
 	// [+] Инициализация WebSocket слоев
-	wsHub := services.NewWSHub(redisCache, keys) // Создаем хаб (сервис)
-	wsHdl := handlers.NewWSHandler(wsHub)        // Создаем хендлер
+	wsHub := services.NewWSHub(redisCache, keys, messageRepo, chatRepo) // Создаем хаб (сервис)
+	wsHdl := handlers.NewWSHandler(wsHub)                               // Создаем хендлер
 
 	// 2. Настройка Fiber
 	app := fiber.New(fiber.Config{
 		ErrorHandler: responses.Error,
 	})
+	// [+][Глобальный CORS — ставить строго ПЕРЕД роутами и логгером]
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"*"}, // Позволяет делать запросы с любого локального файла/домена
+		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+	}))
 
 	// 3. Глобальные Middleware
 	app.Use(middleware.Logger(log))
@@ -67,6 +79,7 @@ func Setup(db *sql.DB, log *slog.Logger, cfg *config.Config) *fiber.App {
 
 	// Приватные роуты (внутри пакета routes)
 	routes.UserRoutes(app, userHdl, jwtService)
+	routes.MessageRoutes(app, msgHdl, jwtService)
 
 	return app
 }

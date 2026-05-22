@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Fiber Go Realtime Chat</title>
+    <!-- Подключаем Tailwind для красивого интерфейса -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center font-sans p-4">
+
+    <!-- ========================================== -->
+    <!-- ФОРМА АВТОРИЗАЦИИ (ЭКРАН ЛОГИНА)           -->
+    <!-- ========================================== -->
+    <div id="login-screen" class="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl">
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-amber-500">Авторизация</h1>
+            <p class="text-slate-400 text-xs mt-1">Войдите, чтобы получить JWT-токен от сервера</p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Email адрес</label>
+                <input id="email" type="email" value="test@example.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 text-slate-200 placeholder-slate-600" placeholder="name@domain.com">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Пароль</label>
+                <input id="password" type="password" value="password123" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 text-slate-200 placeholder-slate-600" placeholder="••••••••">
+            </div>
+            
+            <!-- Ошибка авторизации -->
+            <div id="login-error" class="text-rose-500 text-xs bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl hidden"></div>
+
+            <button onclick="handleLogin()" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl py-3.5 text-sm transition-all cursor-pointer shadow-lg shadow-amber-500/10">
+                Войти в чат
+            </button>
+        </div>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- ГЛАВНЫЙ ИНТЕРФЕЙС ЧАТА (СКРЫТ ДО ВХОДА)     -->
+    <!-- ========================================== -->
+    <div id="chat-screen" class="w-full max-w-4xl h-[90vh] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden hidden">
+        
+        <!-- ШАПКА ЧАТА -->
+        <header class="bg-slate-900/80 border-b border-slate-800 px-6 py-4 flex items-center justify-between backdrop-blur-sm">
+            <div>
+                <h2 id="chat-title" class="font-bold text-base text-amber-500">💬 Комната №1</h2>
+                <div class="flex items-center gap-3 mt-0.5 text-xs text-slate-400">
+                    <span id="user-badge" class="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded-md text-amber-400/90 font-mono">Загрузка...</span>
+                    <span id="status-badge" class="text-rose-500 flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span> Подключение...
+                    </span>
+                </div>
+            </div>
+            
+            <!-- ВЫБОР КОМНАТЫ -->
+            <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl">
+                <label class="text-xs text-slate-400 font-medium">Активный чат:</label>
+                <select id="chat-id" onchange="switchRoom()" class="bg-transparent text-xs font-bold text-amber-500 focus:outline-none cursor-pointer pr-2">
+                    <option value="1" class="bg-slate-950">Чат 1</option>
+                    <option value="2" class="bg-slate-950">Чат 2</option>
+                    <option value="3" class="bg-slate-950">Чат 3</option>
+                </select>
+            </div>
+        </header>
+
+        <!-- ОБЛАСТЬ ОТОБРАЖЕНИЯ СООБЩЕНИЙ -->
+        <main id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-4 flex flex-col bg-slate-950/30">
+            <div class="self-center bg-slate-800/40 text-slate-400 text-xs px-3 py-1.5 rounded-full border border-slate-800/60">
+                Инициализация реалтайм-соединения...
+            </div>
+        </main>
+
+        <!-- ИНДИКАТОР НАБОРА ТЕКСТА (TYPING) -->
+        <div id="typing-box" class="px-6 py-2 text-xs text-amber-400 font-medium italic min-h-[32px] bg-slate-950/10 flex items-center border-t border-slate-900"></div>
+
+        <!-- ПАНЕЛЬ ОТПРАВКИ -->
+        <footer class="p-4 bg-slate-900/50 border-t border-slate-800 flex items-center gap-3">
+            <input id="msg-input" type="text" disabled class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3.5 text-sm focus:outline-none focus:border-amber-500 text-slate-200 placeholder-slate-500 disabled:opacity-50" placeholder="Ожидание подключения к серверу...">
+            <button id="send-btn" onclick="sendChatMessage()" disabled class="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 px-6 py-3.5 rounded-xl font-bold text-sm transition-colors shadow-lg shadow-amber-500/10 cursor-pointer">
+                Отправить
+            </button>
+        </footer>
+    </div>
+
+    <script>
+        // Конфигурация бэкенда
+        const API_URL = "http://localhost:3000"; 
+        const WS_URL  = "ws://localhost:3000";   
+
+        let socket = null;
+        let myUserId = 1;      
+        let myName = "Пользователь";   
+        let accessToken = null;
+        let typingTimer = null;
+        let isTypingNow = false;
+
+        // ФУНКЦИЯ ОТПРАВКИ ЛОГИНА НА БЭКЕНД
+        async function handleLogin() {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const errorDiv = document.getElementById('login-error');
+            
+            errorDiv.innerText = "";
+            errorDiv.classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_URL}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                if (!response.ok) throw new Error(`Ошибка авторизации: ${response.status}`);
+
+                const result = await response.json();
+                
+                // Авто-распаковка токена (поддерживает и корень, и обертку .data)
+                accessToken = result.access_token || result.token || result.data?.access_token || result.data?.token;
+                if (!accessToken) throw new Error("Бэкенд не вернул токен (поле access_token отсутствует).");
+
+                // Пытаемся вытащить данные юзера
+                const user = result.user || result.data?.user;
+                if (user) {
+                    myUserId = Number(user.id || user.ID || 1);
+                    myName = String(user.name || user.Name || "Анна");
+                } else {
+                    // Хак для тестов: если в мыле есть цифра 2, ставим ID 2 (для второго окна)
+                    if (email.includes('2')) {
+                        myUserId = 2;
+                        myName = "Иван";
+                    } else {
+                        myUserId = 1;
+                        myName = "Анна";
+                    }
+                }
+                
+                // Обновляем бейдж юзера
+                document.getElementById('user-badge').innerText = `${myName} (ID: ${myUserId})`;
+
+                // Прячем экран входа, показываем чат
+                document.getElementById('login-screen').classList.add('hidden');
+                document.getElementById('chat-screen').classList.remove('hidden');
+
+                // Запускаем сокет и подгружаем историю
+                initWebSocket();
+                loadChatHistory();
+
+            } catch (err) {
+                errorDiv.innerText = `❌ ${err.message}`;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        // Загрузка сохраненной истории из БД (с JWT-токеном)
+        async function loadChatHistory() {
+            const chatId = document.getElementById('chat-id').value;
+            try {
+                const response = await fetch(`${API_URL}/messages?chat_id=${chatId}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!response.ok) return;
+
+                const result = await response.json();
+                const messages = result.data || result; 
+
+                if (Array.isArray(messages)) {
+                    const container = document.getElementById('chat-messages');
+                    container.innerHTML = ''; 
+                    
+                    messages.forEach(msg => {
+                        const text = msg.text || msg.Text || "";
+                        const senderId = msg.sender_id || msg.SenderID;
+                        const senderName = msg.sender_name || msg.SenderName || `Юзер #${senderId}`;
+                        const isMe = String(senderId) === String(myUserId);
+                        
+                        appendMessage(senderName, text, isMe);
+                    });
+                }
+            } catch (err) {
+                console.error("Ошибка при получении истории:", err);
+            }
+        }
+
+        // Инициализация WebSocket соединения (передаем токен в URL query параметром)
+        function initWebSocket() {
+            if (!accessToken) return;
+
+            socket = new WebSocket(`${WS_URL}/ws?token=${encodeURIComponent(accessToken)}`);
+
+            socket.onopen = () => {
+                console.log("Реалтайм подключен успешно!");
+                
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.className = "text-emerald-500 flex items-center gap-1";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> В сети`;
+                
+                document.getElementById('msg-input').removeAttribute('disabled');
+                document.getElementById('msg-input').placeholder = "Напишите сообщение и нажмите Enter...";
+                document.getElementById('send-btn').removeAttribute('disabled');
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    let wsevent = JSON.parse(event.data);
+                    console.log("Получен пакет из сокета:", wsevent);
+
+                    // Авто-распаковка структуры ответов (если бэкенд возвращает responses.Success)
+                    if (wsevent.data && (wsevent.data.Type || wsevent.data.type)) {
+                        wsevent = wsevent.data;
+                    }
+
+                    const eventType = (wsevent.Type || wsevent.type || "").toLowerCase();
+                    const eventData = wsevent.Data || wsevent.data;
+
+                    if (!eventData) return;
+
+                    // 1. НОВОЕ СООБЩЕНИЕ
+                    if (eventType === 'message') {
+                        const text = eventData.Text || eventData.text || "";
+                        const senderId = eventData.SenderID || eventData.sender_id;
+                        const senderName = eventData.SenderName || eventData.sender_name || `Юзер #${senderId}`;
+                        
+                        if (String(senderId) === String(myUserId)) return;
+
+                        appendMessage(senderName, text, false);
+                    } 
+                    
+                    // 2. СТАТУС НАБОРА ТЕКСТА
+else if (eventType === 'typing') {
+   const userId = eventData.user_id || eventData.UserID;
+    
+    // Если это мы сами — игнорируем
+    if (String(userId) === String(myUserId)) return;
+
+    // БЕРЕМ ИМЯ ИЗ ДАННЫХ, которые пришли от отправителя
+    const uName = eventData.user_name || eventData.UserName || `Юзер #${userId}`;
+    const typingBox = document.getElementById('typing-box');
+    
+    // Включаем надпись
+    typingBox.innerText = `⚡ ${uName} печатает...`;
+
+    // АВТО-СКРЫТИЕ: через 2 секунды надпись исчезнет сама, 
+    // если не придет новое сообщение "typing"
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => {
+        typingBox.innerText = '';
+    }, 1000);
+}
+                } catch (e) {
+                    console.error("Ошибка парсинга JSON пакета:", e);
+                }
+            };
+
+            socket.onclose = (e) => {
+                console.warn(`Соединение разорвано (код: ${e.code}). Переподключение через 3 сек...`);
+                
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.className = "text-rose-500 flex items-center gap-1";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span> Отключен`;
+                
+                document.getElementById('msg-input').setAttribute('disabled', 'true');
+                document.getElementById('msg-input').placeholder = "Соединение разорвано. Ожидание восстановления...";
+                document.getElementById('send-btn').setAttribute('disabled', 'true');
+
+                // Автоматический реконнект
+                setTimeout(initWebSocket, 3000);
+            };
+
+            socket.onerror = (err) => {
+                console.error("Ошибка вебсокета:", err);
+            };
+        }
+
+        // Отправка сообщения в сокет
+function sendChatMessage() {
+    const msgInput = document.getElementById('msg-input');
+    const text = msgInput.value.trim();
+    if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+    const envelope = {
+        "type": "message", // Соответствует EventType "message"
+        "data": {
+            "chat_id": parseInt(document.getElementById('chat-id').value), // Было ChatID
+            "text": text,                                                // Было Text
+            "sender_id": myUserId,                                       // Было SenderID
+            "sender_name": myName                                        // Добавь это поле в Go, если нужно
+        }
+    };
+
+    socket.send(JSON.stringify(envelope));
+    appendMessage(myName, text, true);
+    msgInput.value = '';
+    stopTypingStatus();
+}
+
+        // Отрисовка сообщения на экране
+        function appendMessage(sender, text, isMe) {
+            const container = document.getElementById('chat-messages');
+            const msgWrapper = document.createElement('div');
+            
+            msgWrapper.className = `flex flex-col max-w-[70%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`;
+
+            msgWrapper.innerHTML = `
+                <span class="text-[10px] text-slate-500 mb-1 px-1 font-medium">${isMe ? 'Вы' : sender}</span>
+                <div class="rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-md ${
+                    isMe 
+                    ? 'bg-amber-500 text-slate-950 rounded-tr-none font-medium' 
+                    : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700/50'
+                }">
+                    ${text}
+                </div>
+            `;
+            
+            container.appendChild(msgWrapper);
+            container.scrollTop = container.scrollHeight; 
+        }
+
+        // Логика смены комнат
+        function switchRoom() {
+            const id = document.getElementById('chat-id').value;
+            document.getElementById('chat-title').innerText = `💬 Комната №${id}`;
+            document.getElementById('chat-messages').innerHTML = '';
+            document.getElementById('typing-box').innerText = '';
+            loadChatHistory();
+        }
+
+        // Логика отслеживания набора текста (typing)
+function notifyTyping() {
+    // Шлем сигнал на сервер
+    sendTypingStatus();
+
+    // Перезапускаем таймер: если юзер перестанет печатать, 
+    // через 2 секунды надпись скроется сама (в обработчике onmessage)
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => {
+        // Здесь ничего не шлем, просто ждем
+    }, 1000);
+}
+
+
+        // Логика отслеживания набора текста (typing)
+        function notifyTyping() {
+           // Шлем сигнал на сервер при каждом нажатии
+            sendTypingStatus();
+        }
+
+        function stopTypingStatus() {
+            // Очищаем индикатор на нашей стороне, если нужно
+            document.getElementById('typing-box').innerText = '';
+        }
+
+function sendTypingStatus() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    
+   
+    
+    const envelope = {
+        "type": "typing", // Соответствует EventType "typing"
+        "data": {
+            "chat_id": parseInt(document.getElementById('chat-id').value),
+            "user_id": myUserId,// Согласно твоей модели TypingEvent
+            "user_name": myName
+        }
+    };
+
+    socket.send(JSON.stringify(envelope));
+}
+
+        // Перехват кнопки Enter
+        document.getElementById('msg-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        });
+        document.getElementById('msg-input').addEventListener('input', notifyTyping);
+    </script>
+</body>
+</html>
